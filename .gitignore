@@ -1,0 +1,5 @@
+storefront2/
+venv/
+.env/
+.venv/
+__pycache__/
