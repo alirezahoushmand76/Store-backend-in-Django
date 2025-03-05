@@ -7,11 +7,11 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.mixins import CreateModelMixin, RetrieveModelMixin, DestroyModelMixin
 from rest_framework.filters import SearchFilter, OrderingFilter
 from .models import Product,Collection,OrderItem,Review,Cart,CartItem,Customer,Order
-from .serializers import ProductSerializer,CollectionSerializer,ReviewSerializer,CartSerializer,CartItemSerializer,AddCartItemSerializer,UpdateCartItemSerializer,CustomerSerializer,OrderSerializer,CreateOrderSerializer
+from .serializers import ProductSerializer,CollectionSerializer,ReviewSerializer,CartSerializer,CartItemSerializer,AddCartItemSerializer,UpdateCartItemSerializer,CustomerSerializer,OrderSerializer,CreateOrderSerializer,UpdateOrderSerializer
 from rest_framework import status
 from .filters import ProductFilter
 from .pagination import DefaultPagination
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from .permission import IsAdminOrReadOnly,ViewCustomerHistoryPermission
 
 
@@ -131,7 +131,7 @@ class CustomerViewSet(ModelViewSet):
             return Response({"error": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
             
         # Get or create the customer for the current user
-        customer, created = Customer.objects.get_or_create(
+        customer, created = Customer.objects.get(
             user_id=request.user.id,
             defaults={
                 'email': request.user.email if hasattr(request.user, 'email') else '',
@@ -149,18 +149,27 @@ class CustomerViewSet(ModelViewSet):
             return Response(serializer.data)
     
 class OrderViewSet(ModelViewSet):
-    queryset = Order.objects.all()
-    serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated]
+    http_method_names = ['get','post','patch','delete','head','options']
+    
+    def get_permissions(self):
+        if self.request.method in ['PATCH','DELETE']:
+            return [IsAdminUser()]
+        return [IsAuthenticated()]
+    
+    def create(self, request, *args, **kwargs):
+        serializer = CreateOrderSerializer(data=request.data,context={'user_id':request.user.id})
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save()
+        serializer = OrderSerializer(order)
+        return Response(serializer.data)
     
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return CreateOrderSerializer
+        elif self.request.method == 'PATCH':
+            return UpdateOrderSerializer
         return OrderSerializer
-    
-    def get_serializer_context(self):
-        return {'request': self.request}
-    
+      
     def get_queryset(self):
         user = self.request.user
         
@@ -168,16 +177,6 @@ class OrderViewSet(ModelViewSet):
         if user.is_staff:
             return Order.objects.all()
         
-        # For regular users, safely get or create their customer record first
-        if not user.is_authenticated:
-            return Order.objects.none()
-            
-        try:
-            # Try to get existing customer
-            customer = Customer.objects.get(user_id=user.id)
-        except Customer.DoesNotExist:
-            # If customer doesn't exist for this user, return empty queryset
-            # We don't create one here to avoid side effects from a GET request
-            return Order.objects.none()
-            
+        (customer, created) = Customer.objects.only(
+            'id').get(user_id=user.id)
         return Order.objects.filter(customer_id=customer.id)
