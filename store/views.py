@@ -6,13 +6,15 @@ from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.mixins import CreateModelMixin, RetrieveModelMixin, DestroyModelMixin
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import Product,Collection,OrderItem,Review,Cart,CartItem,Customer
-from .serializers import ProductSerializer,CollectionSerializer,ReviewSerializer,CartSerializer,CartItemSerializer,AddCartItemSerializer,UpdateCartItemSerializer,CustomerSerializer
+from .models import Product,Collection,OrderItem,Review,Cart,CartItem,Customer,Order
+from .serializers import ProductSerializer,CollectionSerializer,ReviewSerializer,CartSerializer,CartItemSerializer,AddCartItemSerializer,UpdateCartItemSerializer,CustomerSerializer,OrderSerializer,CreateOrderSerializer
 from rest_framework import status
 from .filters import ProductFilter
 from .pagination import DefaultPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from .permission import IsAdminOrReadOnly,ViewCustomerHistoryPermission
+
+
 
 class ProductViewSet(ModelViewSet):
     serializer_class = ProductSerializer
@@ -146,4 +148,36 @@ class CustomerViewSet(ModelViewSet):
             serializer.save()
             return Response(serializer.data)
     
+class OrderViewSet(ModelViewSet):
+    queryset = Order.objects.all()
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return CreateOrderSerializer
+        return OrderSerializer
+    
+    def get_serializer_context(self):
+        return {'request': self.request}
+    
+    def get_queryset(self):
+        user = self.request.user
         
+        # Staff users can see all orders
+        if user.is_staff:
+            return Order.objects.all()
+        
+        # For regular users, safely get or create their customer record first
+        if not user.is_authenticated:
+            return Order.objects.none()
+            
+        try:
+            # Try to get existing customer
+            customer = Customer.objects.get(user_id=user.id)
+        except Customer.DoesNotExist:
+            # If customer doesn't exist for this user, return empty queryset
+            # We don't create one here to avoid side effects from a GET request
+            return Order.objects.none()
+            
+        return Order.objects.filter(customer_id=customer.id)
